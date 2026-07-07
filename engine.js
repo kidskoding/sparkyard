@@ -64,3 +64,18 @@ export function removeNode(graph, id) {
   graph.nodes = graph.nodes.filter(n => n.id !== id);
   graph.edges = graph.edges.filter(e => e.from !== id && e.to !== id);
 }
+
+function walk(graph, id, pick) {
+  const out = new Set(), stack = [id];
+  while (stack.length) {
+    const cur = stack.pop();
+    for (const e of graph.edges) {
+      const [a, b] = pick(e);
+      if (a === cur && !out.has(b)) { out.add(b); stack.push(b); }
+    }
+  }
+  out.delete(id);
+  return [...out];
+}
+export const upstream   = (graph, id) => walk(graph, id, e => [e.to, e.from]);
+export const downstream = (graph, id) => walk(graph, id, e => [e.from, e.to]);
