@@ -114,7 +114,7 @@ export function stepSim(sim, graph, dt) {
   // source emission
   for (const n of graph.nodes) {
     if (NODE_TYPES[n.type].kind !== 'source') continue;
-    sim.emitTimers[n.id] += dt;
+    sim.emitTimers[n.id] = (sim.emitTimers[n.id] || 0) + dt; // guard sources added after createSim
     while (sim.emitTimers[n.id] >= EMIT_INTERVAL) {
       sim.emitTimers[n.id] -= EMIT_INTERVAL;
       for (const oe of outEdges(graph, n.id)) sim.inflight.push({ edgeId: oe.id, progress: 0 });

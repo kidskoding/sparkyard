@@ -206,6 +206,7 @@ function run(){
   runBtn.textContent = 'Stop'; runBtn.dataset.on = '1';
 }
 function stop(){ cancelAnimationFrame(raf); for (const [,el] of particles) el.remove(); particles.clear();
+  graph.nodes.forEach(n => document.getElementById('node-'+n.id).classList.remove('running'));
   runBtn.textContent = 'Run'; delete runBtn.dataset.on; }
 
 const runBtn = document.createElement('button'); runBtn.id='run'; runBtn.textContent='Run';
