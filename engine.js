@@ -82,6 +82,7 @@ export const downstream = (graph, id) => walk(graph, id, e => [e.from, e.to]);
 
 export const EMIT_INTERVAL = 1; // seconds between source emissions
 export const TRANSIT = 1;       // seconds a row spends crossing one edge
+export const CASH_PER_GOLD_ROW = 10;
 
 export function createSim(graph) {
   const rows = {}, emitTimers = {};
@@ -89,7 +90,36 @@ export function createSim(graph) {
     rows[n.id] = 0;
     if (NODE_TYPES[n.type].kind === 'source') emitTimers[n.id] = 0;
   }
-  return { t: 0, rows, inflight: [], emitTimers };
+  return { t: 0, rows, inflight: [], emitTimers, cash: 0, orders: [], nextOrderId: 1 };
+}
+
+export function breakEdge(graph, edgeId) {
+  const e = graph.edges.find(x => x.id === edgeId);
+  if (e) e.broken = true;
+  return e;
+}
+
+export function repairEdge(graph, edgeId) {
+  const e = graph.edges.find(x => x.id === edgeId);
+  if (e) e.broken = false;
+  return e;
+}
+
+export function tierRows(sim, graph, tier) {
+  return graph.nodes
+    .filter(n => NODE_TYPES[n.type].tier === tier)
+    .reduce((sum, n) => sum + (sim.rows[n.id] || 0), 0);
+}
+
+export function spawnOrder(sim, graph, { tier, rows, ttl, bounty, penalty }) {
+  const order = {
+    id: sim.nextOrderId++,
+    tier, rows, ttl, bounty, penalty,
+    baseline: tierRows(sim, graph, tier),
+    status: 'open',
+  };
+  sim.orders.push(order);
+  return order;
 }
 
 function outEdges(graph, nodeId) {
@@ -98,6 +128,11 @@ function outEdges(graph, nodeId) {
 
 export function stepSim(sim, graph, dt) {
   sim.t += dt;
+  // rows in flight on a broken (or removed) edge are lost
+  sim.inflight = sim.inflight.filter(p => {
+    const e = graph.edges.find(x => x.id === p.edgeId);
+    return e && !e.broken;
+  });
   // advance inflight
   const arrived = [];
   for (const p of sim.inflight) {
@@ -109,7 +144,11 @@ export function stepSim(sim, graph, dt) {
     const edge = graph.edges.find(e => e.id === p.edgeId);
     if (!edge) continue;
     sim.rows[edge.to] = (sim.rows[edge.to] || 0) + 1;
-    for (const oe of outEdges(graph, edge.to)) sim.inflight.push({ edgeId: oe.id, progress: 0 });
+    const toNode = getNode(graph, edge.to);
+    if (toNode && NODE_TYPES[toNode.type].tier === 'gold') sim.cash += CASH_PER_GOLD_ROW;
+    for (const oe of outEdges(graph, edge.to)) {
+      if (!oe.broken) sim.inflight.push({ edgeId: oe.id, progress: 0 });
+    }
   }
   // source emission
   for (const n of graph.nodes) {
@@ -117,7 +156,21 @@ export function stepSim(sim, graph, dt) {
     sim.emitTimers[n.id] = (sim.emitTimers[n.id] || 0) + dt; // guard sources added after createSim
     while (sim.emitTimers[n.id] >= EMIT_INTERVAL) {
       sim.emitTimers[n.id] -= EMIT_INTERVAL;
-      for (const oe of outEdges(graph, n.id)) sim.inflight.push({ edgeId: oe.id, progress: 0 });
+      for (const oe of outEdges(graph, n.id)) {
+        if (!oe.broken) sim.inflight.push({ edgeId: oe.id, progress: 0 });
+      }
+    }
+  }
+  // orders
+  for (const o of sim.orders) {
+    if (o.status !== 'open') continue;
+    o.ttl -= dt;
+    if (tierRows(sim, graph, o.tier) - o.baseline >= o.rows) {
+      o.status = 'fulfilled';
+      sim.cash += o.bounty;
+    } else if (o.ttl <= 0) {
+      o.status = 'failed';
+      sim.cash -= o.penalty;
     }
   }
   return sim;
