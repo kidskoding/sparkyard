@@ -13,14 +13,18 @@ by making the abstract plumbing physical — a live node graph you wire, run, br
 
 ## Code layout (dev vs ship)
 - Pure engine logic (graph model, edge validation, sim tick, lineage, win eval) lives in a
-  DOM-free ESM module (`engine.js`) so it's unit-testable with `node --test` — no framework.
+  DOM-free ESM module (`engine.js`), unit-tested with Jest (`npm test`).
 - `index.html` loads the module via `<script type="module">` and owns all DOM/render/rAF/CSS.
 - At Artifact ship time, inline the module into one `index.html`.
+- Jest is a devDependency only — it never ships. Production = static `index.html` + `engine.js`
+  on a CDN (Vercel/Pages), or the inlined single file for a Claude Artifact.
+- Jest runs ESM via `--experimental-vm-modules` (wired in the `test` script); tests import
+  from `@jest/globals`.
 
 ## Workflow (non-negotiable)
 - Build in phases. Each checkpoint = working slice + passing tests + commit. Don't advance
   until the current phase's tests are green and committed.
-- Engine phases: TDD with `node --test` (built-in `node:test` + `node:assert`).
+- Engine phases: TDD with Jest (`npm test`).
 - DOM phases: Playwright MCP smoke check as the checkpoint test.
 - Use superpowers skills (brainstorming → writing-plans → executing/subagent-driven, TDD).
 
