@@ -122,3 +122,20 @@ export function stepSim(sim, graph, dt) {
   }
   return sim;
 }
+
+export function validateGraph(graph) {
+  const out = [];
+  for (const n of graph.nodes) {
+    const kind = NODE_TYPES[n.type].kind;
+    if (kind === 'source') continue;
+    if (!graph.edges.some(e => e.to === n.id)) out.push({ nodeId: n.id, error: 'no upstream — nothing to process' });
+  }
+  return out;
+}
+
+export function checkWin(sim, graph, condition) {
+  const total = graph.nodes
+    .filter(n => NODE_TYPES[n.type].tier === condition.tier)
+    .reduce((sum, n) => sum + (sim.rows[n.id] || 0), 0);
+  return total >= condition.atLeast;
+}
