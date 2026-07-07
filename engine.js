@@ -28,3 +28,39 @@ export function moveNode(graph, id, x, y) {
   n.x = x; n.y = y;
   return n;
 }
+
+function hasPath(graph, fromId, toId) {
+  // is there already a directed path from→...→to?
+  const stack = [fromId], seen = new Set();
+  while (stack.length) {
+    const cur = stack.pop();
+    if (cur === toId) return true;
+    if (seen.has(cur)) continue;
+    seen.add(cur);
+    for (const e of graph.edges) if (e.from === cur) stack.push(e.to);
+  }
+  return false;
+}
+
+export function canConnect(graph, fromId, toId) {
+  const from = getNode(graph, fromId), to = getNode(graph, toId);
+  if (!from || !to) return { ok: false, reason: 'node missing' };
+  if (fromId === toId) return { ok: false, reason: 'cannot wire a node to itself' };
+  if (NODE_TYPES[to.type].kind === 'source') return { ok: false, reason: 'a source has no input' };
+  if (graph.edges.some(e => e.from === fromId && e.to === toId)) return { ok: false, reason: 'already wired' };
+  if (hasPath(graph, toId, fromId)) return { ok: false, reason: 'that would make a loop' };
+  return { ok: true, reason: '' };
+}
+
+export function addEdge(graph, fromId, toId) {
+  const check = canConnect(graph, fromId, toId);
+  if (!check.ok) throw new Error(check.reason);
+  const edge = { id: graph.nextId++, from: fromId, to: toId };
+  graph.edges.push(edge);
+  return edge;
+}
+
+export function removeNode(graph, id) {
+  graph.nodes = graph.nodes.filter(n => n.id !== id);
+  graph.edges = graph.edges.filter(e => e.from !== id && e.to !== id);
+}
