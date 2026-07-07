@@ -26,12 +26,17 @@
   .port { position:absolute; top:34px; width:12px; height:12px; border-radius:50%;
           background:var(--accent); border:2px solid var(--bg); }
   .port.in { left:-7px; } .port.out { right:-7px; }
+  #palette { position:fixed; left:16px; top:16px; display:flex; flex-direction:column; gap:6px;
+             background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:10px; z-index:5; }
+  #palette button { background:#21262d; color:var(--text); border:1px solid var(--line);
+                    border-radius:8px; padding:8px 10px; cursor:pointer; text-align:left; }
+  #palette button:hover { border-color:var(--accent); }
 </style>
 </head>
 <body>
 <div id="viewport"><div id="world"><svg id="wires"></svg></div></div>
 <script type="module">
-import { NODE_TYPES, createGraph, addNode, addEdge } from './engine.js';
+import { NODE_TYPES, createGraph, addNode, addEdge, canConnect } from './engine.js';
 
 const world = document.getElementById('world');
 const wires = document.getElementById('wires');
@@ -85,6 +90,74 @@ render();
 
 // expose for tests / later tasks
 window.__sparkyard = { graph, render, wirePath };
+
+// --- coordinate helper (no zoom yet: world is untransformed) ---
+const viewport = document.getElementById('viewport');
+const toWorld = (cx, cy) => { const r = viewport.getBoundingClientRect(); return { x: cx-r.left, y: cy-r.top }; };
+
+// --- drag nodes ---
+let drag = null;
+world.addEventListener('pointerdown', ev => {
+  const nodeEl = ev.target.closest('.node');
+  if (!nodeEl || ev.target.classList.contains('port')) return;
+  const id = +nodeEl.dataset.id;
+  const n = graph.nodes.find(x=>x.id===id);
+  const w = toWorld(ev.clientX, ev.clientY);
+  drag = { id, dx: w.x - n.x, dy: w.y - n.y };
+  nodeEl.setPointerCapture(ev.pointerId);
+});
+world.addEventListener('pointermove', ev => {
+  if (!drag) return;
+  const w = toWorld(ev.clientX, ev.clientY);
+  moveNodePos(drag.id, w.x - drag.dx, w.y - drag.dy);
+});
+world.addEventListener('pointerup', () => drag = null);
+
+function moveNodePos(id, x, y) {
+  const n = graph.nodes.find(v=>v.id===id); n.x = x; n.y = y;
+  const el = document.getElementById('node-'+id); el.style.left = x+'px'; el.style.top = y+'px';
+  for (const e of graph.edges) if (e.from===id||e.to===id) {
+    const a = graph.nodes.find(v=>v.id===e.from), b = graph.nodes.find(v=>v.id===e.to);
+    wires.querySelector(`.wire[data-edge="${e.id}"]`).setAttribute('d', wirePath(a,b));
+  }
+}
+
+// --- live wire draw from output ports ---
+let pending = null;
+const temp = document.createElementNS(NS,'path'); temp.setAttribute('class','wire'); temp.style.opacity=.4;
+world.addEventListener('pointerdown', ev => {
+  if (!ev.target.classList.contains('out')) return;
+  const id = +ev.target.closest('.node').dataset.id;
+  pending = { from: id }; wires.appendChild(temp); ev.stopPropagation();
+});
+window.addEventListener('pointermove', ev => {
+  if (!pending) return;
+  const a = graph.nodes.find(n=>n.id===pending.from);
+  const p1 = outPos(a), w = toWorld(ev.clientX, ev.clientY);
+  const k = Math.max(40, Math.min(160,(w.x-p1.x)/2));
+  temp.setAttribute('d', `M ${p1.x} ${p1.y} C ${p1.x+k} ${p1.y}, ${w.x-k} ${w.y}, ${w.x} ${w.y}`);
+});
+window.addEventListener('pointerup', ev => {
+  if (!pending) return;
+  const inEl = ev.target.classList.contains('in') ? ev.target.closest('.node') : null;
+  if (inEl) {
+    const to = +inEl.dataset.id;
+    const chk = canConnect(graph, pending.from, to);
+    if (chk.ok) { addEdge(graph, pending.from, to); render(); }
+    else { inEl.animate([{outline:'2px solid var(--danger)'},{outline:'2px solid transparent'}],{duration:500}); }
+  }
+  temp.remove(); pending = null;
+});
+
+// --- palette ---
+const palette = document.createElement('div'); palette.id = 'palette';
+for (const [type, t] of Object.entries(NODE_TYPES)) {
+  const b = document.createElement('button'); b.textContent = t.label;
+  b.onclick = () => { const r = viewport.getBoundingClientRect();
+    addNode(graph, { type, x: r.width/2-95, y: r.height/2-30 }); render(); };
+  palette.appendChild(b);
+}
+document.body.appendChild(palette);
 </script>
 </body>
 </html>
