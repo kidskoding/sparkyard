@@ -31,12 +31,20 @@
   #palette button { background:#21262d; color:var(--text); border:1px solid var(--line);
                     border-radius:8px; padding:8px 10px; cursor:pointer; text-align:left; }
   #palette button:hover { border-color:var(--accent); }
+  #run { position:fixed; right:16px; top:16px; z-index:5; background:var(--accent); color:#001; border:0;
+         font-weight:700; padding:10px 22px; border-radius:10px; cursor:pointer; }
+  #run[data-on] { background:var(--danger); color:#fff; }
+  #inspector { position:fixed; left:50%; transform:translateX(-50%); bottom:16px; z-index:5; max-width:70vw;
+               background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 16px; }
+  .node.running { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent),0 6px 24px rgba(46,166,255,.4); }
+  .node.error { border-color:var(--danger); animation:shake .3s; }
+  @keyframes shake { 0%,100%{transform:translateX(0)} 25%{transform:translateX(-4px)} 75%{transform:translateX(4px)} }
 </style>
 </head>
 <body>
 <div id="viewport"><div id="world"><svg id="wires"></svg></div></div>
 <script type="module">
-import { NODE_TYPES, createGraph, addNode, addEdge, canConnect } from './engine.js';
+import { NODE_TYPES, createGraph, addNode, addEdge, canConnect, createSim, stepSim, validateGraph } from './engine.js';
 
 const world = document.getElementById('world');
 const wires = document.getElementById('wires');
@@ -158,6 +166,59 @@ for (const [type, t] of Object.entries(NODE_TYPES)) {
   palette.appendChild(b);
 }
 document.body.appendChild(palette);
+
+// --- run loop ---
+let sim = null, raf = null, last = 0;
+const particles = new Map(); // inflight obj → circle el
+
+function edgePoint(edgeId, t){ const p = wires.querySelector(`.wire[data-edge="${edgeId}"]`); return p.getPointAtLength(t*p.getTotalLength()); }
+
+function tick(ts){
+  const dt = Math.min(0.05, (ts-last)/1000 || 0); last = ts;
+  stepSim(sim, graph, dt);
+  // particles
+  const live = new Set(sim.inflight);
+  for (const [obj, el] of particles) if (!live.has(obj)) { el.remove(); particles.delete(obj); }
+  for (const p of sim.inflight) {
+    let el = particles.get(p);
+    if (!el) { el = document.createElementNS(NS,'circle'); el.setAttribute('r','4'); el.setAttribute('fill','var(--accent)');
+               wires.appendChild(el); particles.set(p, el); }
+    const pt = edgePoint(p.edgeId, Math.min(1,p.progress));
+    el.setAttribute('cx', pt.x); el.setAttribute('cy', pt.y);
+  }
+  // counters + glow
+  for (const n of graph.nodes) {
+    const el = document.getElementById('node-'+n.id);
+    if (NODE_TYPES[n.type].kind !== 'source') el.querySelector('[data-rows]').textContent = (sim.rows[n.id]||0)+' rows';
+    el.classList.toggle('running', sim.inflight.some(p => {
+      const e = graph.edges.find(x=>x.id===p.edgeId); return e && (e.from===n.id||e.to===n.id);
+    }));
+  }
+  raf = requestAnimationFrame(tick);
+}
+
+function run(){
+  const errs = validateGraph(graph);
+  graph.nodes.forEach(n => document.getElementById('node-'+n.id).classList.remove('error'));
+  errs.forEach(e => document.getElementById('node-'+e.nodeId).classList.add('error'));
+  sim = createSim(graph); last = performance.now(); raf = requestAnimationFrame(tick);
+  runBtn.textContent = 'Stop'; runBtn.dataset.on = '1';
+}
+function stop(){ cancelAnimationFrame(raf); for (const [,el] of particles) el.remove(); particles.clear();
+  runBtn.textContent = 'Run'; delete runBtn.dataset.on; }
+
+const runBtn = document.createElement('button'); runBtn.id='run'; runBtn.textContent='Run';
+runBtn.onclick = () => runBtn.dataset.on ? stop() : run();
+document.body.appendChild(runBtn);
+
+// inspector
+const inspector = document.createElement('div'); inspector.id='inspector';
+inspector.textContent = 'Click a node to learn what it is.';
+document.body.appendChild(inspector);
+world.addEventListener('click', ev => { const el = ev.target.closest('.node'); if(!el) return;
+  const n = graph.nodes.find(x=>x.id===+el.dataset.id);
+  inspector.innerHTML = `<b>${NODE_TYPES[n.type].label}</b> — ${NODE_TYPES[n.type].concept}`;
+});
 </script>
 </body>
 </html>
