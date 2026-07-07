@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sparkyard</title>
+<style>
+  :root { --bronze:#cd7f32; --silver:#c9d1d9; --gold:#ffd166; --bg:#0d1117; --panel:#161b22;
+          --line:#30363d; --accent:#2ea6ff; --danger:#ff4d4f; --text:#e6edf3; }
+  * { box-sizing: border-box; }
+  html,body { margin:0; height:100%; background:var(--bg); color:var(--text);
+              font:14px/1.4 -apple-system,Segoe UI,Roboto,sans-serif; overflow:hidden; }
+  #viewport { position:fixed; inset:0; overflow:hidden;
+              background:radial-gradient(circle at 1px 1px,#1b2230 1px,transparent 0) 0 0/24px 24px; }
+  #world { position:absolute; inset:0; transform-origin:0 0; }
+  #wires { position:absolute; inset:0; width:100%; height:100%; overflow:visible; pointer-events:none; }
+  .wire { fill:none; stroke:var(--accent); stroke-width:2.5; opacity:.7; }
+  .node { position:absolute; width:190px; background:var(--panel); border:1px solid var(--line);
+          border-radius:10px; padding:10px 12px; cursor:grab; user-select:none;
+          box-shadow:0 6px 20px rgba(0,0,0,.35); transition:box-shadow .15s,border-color .15s; }
+  .node:active { cursor:grabbing; }
+  .node .title { font-weight:600; }
+  .node .rows { margin-top:6px; font-variant-numeric:tabular-nums; opacity:.75; font-size:12px; }
+  .node[data-tier=bronze] { border-left:4px solid var(--bronze); }
+  .node[data-tier=silver] { border-left:4px solid var(--silver); }
+  .node[data-tier=gold]   { border-left:4px solid var(--gold); }
+  .port { position:absolute; top:34px; width:12px; height:12px; border-radius:50%;
+          background:var(--accent); border:2px solid var(--bg); }
+  .port.in { left:-7px; } .port.out { right:-7px; }
+</style>
+</head>
+<body>
+<div id="viewport"><div id="world"><svg id="wires"></svg></div></div>
+<script type="module">
+import { NODE_TYPES, createGraph, addNode, addEdge } from './engine.js';
+
+const world = document.getElementById('world');
+const wires = document.getElementById('wires');
+const NS = 'http://www.w3.org/2000/svg';
+const W = 190, PORT_Y = 34;
+const outPos = n => ({ x: n.x + W, y: n.y + PORT_Y });
+const inPos  = n => ({ x: n.x,     y: n.y + PORT_Y });
+
+const graph = createGraph();
+function seed() {
+  const defs = [['source',60,120],['bronze',320,120],['clean',580,120],
+    ['silver',840,120],['agg',1100,120],['gold',1360,120]];
+  const ids = defs.map(([t,x,y]) => addNode(graph, { type:t, x, y }).id);
+  for (let i=0;i<ids.length-1;i++) addEdge(graph, ids[i], ids[i+1]);
+}
+seed();
+
+function wirePath(a, b) {
+  const p1 = outPos(a), p2 = inPos(b);
+  const k = Math.max(40, Math.min(160, (p2.x - p1.x) / 2));
+  return `M ${p1.x} ${p1.y} C ${p1.x+k} ${p1.y}, ${p2.x-k} ${p2.y}, ${p2.x} ${p2.y}`;
+}
+
+function render() {
+  // nodes
+  for (const n of graph.nodes) {
+    let el = document.getElementById('node-'+n.id);
+    const t = NODE_TYPES[n.type];
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'node-'+n.id; el.className = 'node'; el.dataset.id = n.id;
+      if (t.tier) el.dataset.tier = t.tier;
+      el.innerHTML = `<div class="title">${t.label}</div>
+        <div class="rows" data-rows>${t.kind==='source'?'∞ source':'0 rows'}</div>
+        <div class="port in"></div><div class="port out"></div>`;
+      world.appendChild(el);
+    }
+    el.style.left = n.x+'px'; el.style.top = n.y+'px';
+  }
+  // wires
+  wires.querySelectorAll('.wire').forEach(w => w.remove());
+  for (const e of graph.edges) {
+    const a = graph.nodes.find(n=>n.id===e.from), b = graph.nodes.find(n=>n.id===e.to);
+    const path = document.createElementNS(NS,'path');
+    path.setAttribute('class','wire'); path.dataset.edge = e.id;
+    path.setAttribute('d', wirePath(a,b));
+    wires.appendChild(path);
+  }
+}
+render();
+
+// expose for tests / later tasks
+window.__sparkyard = { graph, render, wirePath };
+</script>
+</body>
+</html>
