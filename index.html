@@ -171,7 +171,7 @@ document.body.appendChild(palette);
 let sim = null, raf = null, last = 0;
 const particles = new Map(); // inflight obj → circle el
 
-function edgePoint(edgeId, t){ const p = wires.querySelector(`.wire[data-edge="${edgeId}"]`); return p.getPointAtLength(t*p.getTotalLength()); }
+function edgePoint(edgeId, t){ const p = wires.querySelector(`.wire[data-edge="${edgeId}"]`); return p ? p.getPointAtLength(t*p.getTotalLength()) : null; }
 
 function tick(ts){
   const dt = Math.min(0.05, (ts-last)/1000 || 0); last = ts;
@@ -184,6 +184,7 @@ function tick(ts){
     if (!el) { el = document.createElementNS(NS,'circle'); el.setAttribute('r','4'); el.setAttribute('fill','var(--accent)');
                wires.appendChild(el); particles.set(p, el); }
     const pt = edgePoint(p.edgeId, Math.min(1,p.progress));
+    if (!pt) continue; // wire gone (e.g. edge removed mid-run) — skip this particle
     el.setAttribute('cx', pt.x); el.setAttribute('cy', pt.y);
   }
   // counters + glow
