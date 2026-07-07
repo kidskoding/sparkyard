@@ -31,9 +31,23 @@
   #palette button { background:#21262d; color:var(--text); border:1px solid var(--line);
                     border-radius:8px; padding:8px 10px; cursor:pointer; text-align:left; }
   #palette button:hover { border-color:var(--accent); }
-  #run { position:fixed; right:16px; top:16px; z-index:5; background:var(--accent); color:#001; border:0;
-         font-weight:700; padding:10px 22px; border-radius:10px; cursor:pointer; }
-  #run[data-on] { background:var(--danger); color:#fff; }
+  .wire.broken { stroke:var(--danger); stroke-width:5; stroke-dasharray:10 7; opacity:1;
+                 pointer-events:stroke; cursor:pointer; animation:dashflow .6s linear infinite;
+                 filter:drop-shadow(0 0 6px rgba(255,77,79,.8)); }
+  @keyframes dashflow { to { stroke-dashoffset:-17; } }
+  #cash { position:fixed; right:16px; top:16px; z-index:5; background:var(--panel);
+          border:1px solid var(--gold); color:var(--gold); font-weight:700; font-size:18px;
+          padding:10px 18px; border-radius:10px; font-variant-numeric:tabular-nums; }
+  #cash.pop { animation:pop .3s; }
+  @keyframes pop { 50% { transform:scale(1.15); } }
+  #orders { position:fixed; top:16px; left:50%; transform:translateX(-50%); display:flex; gap:10px; z-index:5; }
+  .order { background:var(--panel); border:1px solid var(--line); border-radius:10px;
+           padding:8px 14px; min-width:180px; font-size:13px; }
+  .order .bar { height:4px; background:var(--accent); border-radius:2px; margin-top:6px; }
+  .order.done { border-color:#3fb950; box-shadow:0 0 12px rgba(63,185,80,.5); }
+  .order.fail { border-color:var(--danger); box-shadow:0 0 12px rgba(255,77,79,.5); }
+  .float { position:fixed; z-index:9; font-weight:700; animation:rise 1s ease-out forwards; pointer-events:none; }
+  @keyframes rise { to { transform:translateY(-40px); opacity:0; } }
   #inspector { position:fixed; left:50%; transform:translateX(-50%); bottom:16px; z-index:5; max-width:70vw;
                background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:10px 16px; }
   .node.running { border-color:var(--accent); box-shadow:0 0 0 2px var(--accent),0 6px 24px rgba(46,166,255,.4); }
@@ -44,7 +58,8 @@
 <body>
 <div id="viewport"><div id="world"><svg id="wires"></svg></div></div>
 <script type="module">
-import { NODE_TYPES, createGraph, addNode, addEdge, canConnect, createSim, stepSim, validateGraph } from './engine.js';
+import { NODE_TYPES, createGraph, addNode, addEdge, canConnect, createSim, stepSim, validateGraph,
+         breakEdge, repairEdge, spawnOrder } from './engine.js';
 
 const world = document.getElementById('world');
 const wires = document.getElementById('wires');
@@ -89,7 +104,7 @@ function render() {
   for (const e of graph.edges) {
     const a = graph.nodes.find(n=>n.id===e.from), b = graph.nodes.find(n=>n.id===e.to);
     const path = document.createElementNS(NS,'path');
-    path.setAttribute('class','wire'); path.dataset.edge = e.id;
+    path.setAttribute('class', e.broken ? 'wire broken' : 'wire'); path.dataset.edge = e.id;
     path.setAttribute('d', wirePath(a,b));
     wires.appendChild(path);
   }
@@ -167,8 +182,85 @@ for (const [type, t] of Object.entries(NODE_TYPES)) {
 }
 document.body.appendChild(palette);
 
-// --- run loop ---
-let sim = null, raf = null, last = 0;
+// --- HUD: cash + orders + inspector/ticker ---
+const cashEl = document.createElement('div'); cashEl.id='cash'; cashEl.textContent='$0';
+document.body.appendChild(cashEl);
+const ordersBox = document.createElement('div'); ordersBox.id='orders';
+document.body.appendChild(ordersBox);
+const inspector = document.createElement('div'); inspector.id='inspector';
+inspector.textContent = 'The plant is live — data is flowing. Click anything to learn what it is.';
+document.body.appendChild(inspector);
+
+function announce(html){
+  inspector.innerHTML = html;
+  inspector.animate([{transform:'translateX(-50%) scale(1.06)'},{transform:'translateX(-50%) scale(1)'}],{duration:250});
+}
+function floatText(text, x, y, color){
+  const f = document.createElement('div'); f.className='float'; f.textContent=text;
+  f.style.left=x+'px'; f.style.top=y+'px'; f.style.color=color;
+  document.body.appendChild(f);
+  f.addEventListener('animationend', () => f.remove());
+}
+
+world.addEventListener('click', ev => { const el = ev.target.closest('.node'); if(!el) return;
+  const n = graph.nodes.find(x=>x.id===+el.dataset.id);
+  announce(`<b>${NODE_TYPES[n.type].label}</b> — ${NODE_TYPES[n.type].concept}`);
+});
+
+// --- incidents: schema drift snaps a pipe; click the red pipe to repair ---
+function strikeIncident(){
+  const candidates = graph.edges.filter(e => !e.broken);
+  if (!candidates.length) return;
+  const e = candidates[(Math.random()*candidates.length)|0];
+  breakEdge(graph, e.id);
+  const path = wires.querySelector(`.wire[data-edge="${e.id}"]`);
+  if (path) path.classList.add('broken');
+  const toNode = graph.nodes.find(n=>n.id===e.to);
+  const toEl = document.getElementById('node-'+e.to);
+  if (toEl) toEl.animate([{transform:'translateX(0)'},{transform:'translateX(-5px)'},{transform:'translateX(5px)'},{transform:'translateX(0)'}],{duration:300});
+  announce(`⚠️ <b>Schema drift!</b> Upstream data changed shape mid-flow — the pipe into <b>${NODE_TYPES[toNode.type].label}</b> snapped. Rows are being lost. <b>Click the red pipe to repair.</b>`);
+}
+wires.addEventListener('click', ev => {
+  const path = ev.target.closest('.wire.broken');
+  if (!path) return;
+  repairEdge(graph, +path.dataset.edge);
+  path.classList.remove('broken');
+  floatText('🔧 repaired', ev.clientX-30, ev.clientY-20, '#3fb950');
+  announce(`✅ <b>Repaired.</b> Schema realigned (like Delta schema enforcement catching drift) — flow resumes.`);
+});
+
+// --- SLA orders: analysts demand gold rows on a deadline ---
+const orderEls = new Map(); // order id → card el
+function placeOrder(){
+  const rows = 3 + (Math.random()*3|0);
+  const ttl = 18 + Math.random()*8;
+  const o = spawnOrder(sim, graph, { tier:'gold', rows, ttl, bounty: rows*25, penalty: 60 });
+  o.ttl0 = ttl;
+  const card = document.createElement('div'); card.className='order';
+  card.innerHTML = `📊 Dashboard wants <b>${rows} gold rows</b><div class="bar"></div>`;
+  ordersBox.appendChild(card);
+  orderEls.set(o.id, card);
+}
+function updateOrders(){
+  for (const o of sim.orders) {
+    const card = orderEls.get(o.id);
+    if (!card) continue;
+    if (o.status === 'open') {
+      card.querySelector('.bar').style.width = Math.max(0, o.ttl/o.ttl0*100)+'%';
+    } else {
+      const r = cashEl.getBoundingClientRect();
+      if (o.status === 'fulfilled') { card.classList.add('done'); floatText(`+$${o.bounty}`, r.left, r.top-10, '#3fb950'); }
+      else { card.classList.add('fail'); floatText(`-$${o.penalty}`, r.left, r.top-10, 'var(--danger)'); }
+      orderEls.delete(o.id);
+      setTimeout(() => card.remove(), 1200);
+    }
+  }
+}
+
+// --- the plant is always on ---
+const sim = createSim(graph);
+let last = performance.now();
+let nextIncidentAt = 10, nextOrderAt = 5;
 const particles = new Map(); // inflight obj → circle el
 
 function edgePoint(edgeId, t){ const p = wires.querySelector(`.wire[data-edge="${edgeId}"]`); return p ? p.getPointAtLength(t*p.getTotalLength()) : null; }
@@ -176,6 +268,9 @@ function edgePoint(edgeId, t){ const p = wires.querySelector(`.wire[data-edge="$
 function tick(ts){
   const dt = Math.min(0.05, (ts-last)/1000 || 0); last = ts;
   stepSim(sim, graph, dt);
+  // pressure schedule
+  if (sim.t >= nextIncidentAt) { strikeIncident(); nextIncidentAt = sim.t + 9 + Math.random()*6; }
+  if (sim.t >= nextOrderAt)    { placeOrder();     nextOrderAt    = sim.t + 12 + Math.random()*6; }
   // particles
   const live = new Set(sim.inflight);
   for (const [obj, el] of particles) if (!live.has(obj)) { el.remove(); particles.delete(obj); }
@@ -195,32 +290,22 @@ function tick(ts){
       const e = graph.edges.find(x=>x.id===p.edgeId); return e && (e.from===n.id||e.to===n.id);
     }));
   }
-  raf = requestAnimationFrame(tick);
+  // cash + orders
+  if (+cashEl.dataset.cash !== sim.cash) {
+    cashEl.dataset.cash = sim.cash;
+    cashEl.textContent = `$${sim.cash}`;
+    cashEl.classList.remove('pop'); void cashEl.offsetWidth; cashEl.classList.add('pop');
+  }
+  updateOrders();
+  // orphan check (a node someone spawned but never wired)
+  const orphans = new Set(validateGraph(graph).map(e => e.nodeId));
+  for (const n of graph.nodes) document.getElementById('node-'+n.id).classList.toggle('error', orphans.has(n.id));
+  requestAnimationFrame(tick);
 }
+requestAnimationFrame(tick);
 
-function run(){
-  const errs = validateGraph(graph);
-  graph.nodes.forEach(n => document.getElementById('node-'+n.id).classList.remove('error'));
-  errs.forEach(e => document.getElementById('node-'+e.nodeId).classList.add('error'));
-  sim = createSim(graph); last = performance.now(); raf = requestAnimationFrame(tick);
-  runBtn.textContent = 'Stop'; runBtn.dataset.on = '1';
-}
-function stop(){ cancelAnimationFrame(raf); for (const [,el] of particles) el.remove(); particles.clear();
-  graph.nodes.forEach(n => document.getElementById('node-'+n.id).classList.remove('running'));
-  runBtn.textContent = 'Run'; delete runBtn.dataset.on; }
-
-const runBtn = document.createElement('button'); runBtn.id='run'; runBtn.textContent='Run';
-runBtn.onclick = () => runBtn.dataset.on ? stop() : run();
-document.body.appendChild(runBtn);
-
-// inspector
-const inspector = document.createElement('div'); inspector.id='inspector';
-inspector.textContent = 'Click a node to learn what it is.';
-document.body.appendChild(inspector);
-world.addEventListener('click', ev => { const el = ev.target.closest('.node'); if(!el) return;
-  const n = graph.nodes.find(x=>x.id===+el.dataset.id);
-  inspector.innerHTML = `<b>${NODE_TYPES[n.type].label}</b> — ${NODE_TYPES[n.type].concept}`;
-});
+// expose for smoke tests
+Object.assign(window.__sparkyard, { sim, strikeIncident, placeOrder });
 </script>
 </body>
 </html>
