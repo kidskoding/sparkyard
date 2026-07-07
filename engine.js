@@ -79,3 +79,46 @@ function walk(graph, id, pick) {
 }
 export const upstream   = (graph, id) => walk(graph, id, e => [e.to, e.from]);
 export const downstream = (graph, id) => walk(graph, id, e => [e.from, e.to]);
+
+export const EMIT_INTERVAL = 1; // seconds between source emissions
+export const TRANSIT = 1;       // seconds a row spends crossing one edge
+
+export function createSim(graph) {
+  const rows = {}, emitTimers = {};
+  for (const n of graph.nodes) {
+    rows[n.id] = 0;
+    if (NODE_TYPES[n.type].kind === 'source') emitTimers[n.id] = 0;
+  }
+  return { t: 0, rows, inflight: [], emitTimers };
+}
+
+function outEdges(graph, nodeId) {
+  return graph.edges.filter(e => e.from === nodeId);
+}
+
+export function stepSim(sim, graph, dt) {
+  sim.t += dt;
+  // advance inflight
+  const arrived = [];
+  for (const p of sim.inflight) {
+    p.progress += dt / TRANSIT;
+    if (p.progress >= 1) arrived.push(p);
+  }
+  sim.inflight = sim.inflight.filter(p => p.progress < 1);
+  for (const p of arrived) {
+    const edge = graph.edges.find(e => e.id === p.edgeId);
+    if (!edge) continue;
+    sim.rows[edge.to] = (sim.rows[edge.to] || 0) + 1;
+    for (const oe of outEdges(graph, edge.to)) sim.inflight.push({ edgeId: oe.id, progress: 0 });
+  }
+  // source emission
+  for (const n of graph.nodes) {
+    if (NODE_TYPES[n.type].kind !== 'source') continue;
+    sim.emitTimers[n.id] += dt;
+    while (sim.emitTimers[n.id] >= EMIT_INTERVAL) {
+      sim.emitTimers[n.id] -= EMIT_INTERVAL;
+      for (const oe of outEdges(graph, n.id)) sim.inflight.push({ edgeId: oe.id, progress: 0 });
+    }
+  }
+  return sim;
+}
